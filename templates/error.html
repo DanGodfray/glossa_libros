@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block contenido %}
+<h1>{{ titulo }}</h1>
+<div class="caja">
+  <p style="margin-top:0">{{ detalle }}</p>
+  <a class="btn" href="{{ url_for('inventario') }}">Ir al inventario</a>
+</div>
+{% endblock %}

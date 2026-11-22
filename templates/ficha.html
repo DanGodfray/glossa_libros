@@ -7,6 +7,20 @@
 
 <h1>{{ "Editar libro" if libro.id else "Nuevo libro" }}</h1>
 {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+{% if conflicto is defined %}
+<div class="aviso">
+  <strong>Esta ficha cambió en otro dispositivo mientras la editabas</strong> (por ejemplo, una venta).
+  Abajo está tu versión; revísala y toca <strong>Guardar</strong> para confirmarla.
+  <br>Stock guardado ahora: {{ stock_actual }}. Tu cambio de stock se aplica sobre ese valor.
+  {% if conflicto %}
+  <br>Distinto a lo guardado:
+  <ul style="margin:6px 0 0;padding-left:20px">
+    {% for etiqueta, antes, despues in conflicto %}<li>{{ etiqueta }}: guardado «{{ antes }}», tu versión «{{ despues }}»</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% if subio_foto %}<br>Si habías elegido una foto, vuelve a elegirla.{% endif %}
+</div>
+{% endif %}
 {% if duplicado %}
 <div class="aviso">
   Ya existe <a href="{{ url_for('ver_libro', libro_id=duplicado.id) }}">«{{ duplicado.titulo }}»</a>
@@ -36,13 +50,14 @@
 <!-- 2) Ficha del libro -->
 <form class="caja" method="post" enctype="multipart/form-data"
       action="{{ url_for('guardar', libro_id=libro.id) if libro.id else url_for('guardar') }}">
-  {% if libro.foto %}
-    <img class="portada" src="{{ url_for('static', filename='fotos/' ~ libro.foto) }}" alt="">
-  {% elif libro.portada_url %}
-    <img class="portada" src="{{ libro.portada_url }}" alt="">
-  {% endif %}
+  {% if imagen_libro(libro) %}<img class="portada" src="{{ imagen_libro(libro) }}" alt="">{% endif %}
   <input type="hidden" name="portada_url" value="{{ libro.portada_url or '' }}">
   <input type="hidden" name="foto" value="{{ libro.foto or '' }}">
+  {% if libro.id %}
+    {# Para detectar cambios hechos en otro dispositivo mientras se edita (ver guardar en app.py) #}
+    <input type="hidden" name="modificado" value="{{ libro.modificado or '' }}">
+    <input type="hidden" name="stock_original" value="{{ libro.stock_original if libro.stock_original is defined else (libro.stock or 0) }}">
+  {% endif %}
   {% if duplicado %}<input type="hidden" name="confirmar_duplicado" value="1">{% endif %}
 
   <label>Título *</label>
@@ -54,7 +69,7 @@
     <div><label>Lugar de edición</label><input name="lugar_edicion" value="{{ libro.lugar_edicion or '' }}"></div>
   </div>
   <div class="fila">
-    <div><label>Año</label><input name="anio" inputmode="numeric" value="{{ libro.anio or '' }}"></div>
+    <div><label>Año / fecha</label><input name="fecha_edicion" placeholder="1923, c. 1890, s.f." value="{{ libro.fecha_edicion or libro.anio or '' }}"></div>
     <div><label>Idioma</label><input name="idioma" list="l_idiomas" value="{{ libro.idioma or '' }}"></div>
   </div>
   <div class="fila">
@@ -108,7 +123,7 @@
 {% if libro.id %}
 <div class="caja" id="instagram">
   <label>Texto para Instagram (edítalo y cópialo)</label>
-  <textarea id="caption" rows="10">{{ caption }}</textarea>
+  <textarea id="caption" rows="{{ caption.count('\n') + 3 }}">{{ caption }}</textarea>
   <button class="btn sec" type="button" onclick="copiar()">Copiar texto</button>
   {% if libro.foto %}<p class="meta">Para subir la foto: mantén presionada la imagen de arriba y elige "Guardar en Fotos".</p>{% endif %}
 </div>
@@ -139,7 +154,7 @@
   {% for v in ventas %}
   <div class="tarjeta" style="align-items:center{{ ';margin-top:14px' if loop.first }}">
     <div style="flex:1">
-      <strong>{{ v.cantidad }} × {{ v.precio | clp }}</strong> · {{ v.fecha }}<br>
+      <strong>{{ v.cantidad }} × {{ v.precio | clp }}</strong> · {{ v.fecha | fecha }}<br>
       <span class="meta">{{ v.comprador or "Sin comprador" }}{{ " · " ~ v.notas if v.notas }}</span>
     </div>
     <form method="post" action="{{ url_for('anular_venta', venta_id=v.id) }}"

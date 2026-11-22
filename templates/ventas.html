@@ -12,7 +12,7 @@
   <div class="tarjeta">
     {% if v.existe %}<a href="{{ url_for('ver_libro', libro_id=v.libro_id, _anchor='venta') }}">{% else %}<div style="flex:1">{% endif %}
       <strong>{{ v.titulo }}</strong>{% if not v.existe %} <span class="meta">(eliminado del inventario)</span>{% endif %}<br>
-      <span class="meta">{{ v.fecha }} · {{ v.cantidad }} × {{ v.precio | clp }}{{ " · " ~ v.comprador if v.comprador }}</span>
+      <span class="meta">{{ v.fecha | fecha }} · {{ v.cantidad }} × {{ v.precio | clp }}{{ " · " ~ v.comprador if v.comprador }}</span>
       {% if v.notas %}<br><span class="meta">{{ v.notas }}</span>{% endif %}
     {% if v.existe %}</a>{% else %}</div>{% endif %}
   </div>

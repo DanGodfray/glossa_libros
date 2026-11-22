@@ -3,6 +3,7 @@
 venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # Datos del inventario: viven en cada instalación, no en el repositorio
 inventario.db

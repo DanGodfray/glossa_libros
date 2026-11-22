@@ -1,12 +1,28 @@
 """Leer el ISBN desde una foto y buscar los datos del libro en APIs gratuitas."""
+import hashlib
+import io
 import os
+from urllib.parse import urlparse
 
 import requests
 import zxingcpp
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 
 register_heif_opener()  # permite abrir fotos HEIC del iPhone
+
+
+class ImagenInvalida(Exception):
+    """El archivo subido no es una imagen que se pueda abrir."""
+
+
+def abrir_imagen(archivo):
+    """Abre una imagen girada según la cámara. Lanza ImagenInvalida si no es una imagen válida."""
+    try:
+        img = Image.open(archivo)
+        return ImageOps.exif_transpose(img)
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError) as e:
+        raise ImagenInvalida(str(e)) from e
 
 # Open Library pide identificarse con el nombre de la app y un correo de contacto.
 # El correo se configura en la variable OPENLIBRARY_EMAIL para no publicarlo en el código.
@@ -75,9 +91,11 @@ def leer_isbn_de_foto(archivo):
     Devuelve (isbn, codigos): el ISBN-13 o None, y la lista de códigos leídos
     (sirve para avisar cuando se leyó un código que no es ISBN, p. ej. libros antiguos).
     """
-    img = Image.open(archivo)
-    img = ImageOps.exif_transpose(img).convert("L")  # girar según la cámara y pasar a gris
-    img.thumbnail((2000, 2000))  # fotos más chicas se leen más rápido
+    try:
+        img = abrir_imagen(archivo).convert("L")  # pasar a gris
+        img.thumbnail((2000, 2000))  # fotos más chicas se leen más rápido
+    except OSError as e:  # imagen truncada o dañada
+        raise ImagenInvalida(str(e)) from e
     codigos = [c.text for c in zxingcpp.read_barcodes(img)]
     for texto in codigos:
         isbn = normalizar_isbn(texto)
@@ -88,24 +106,66 @@ def leer_isbn_de_foto(archivo):
 
 # ---------- Búsqueda en APIs ----------
 
+def _describir_falla(fuente, error):
+    """Texto corto para el aviso cuando un catálogo no responde."""
+    if isinstance(error, requests.HTTPError) and error.response is not None and error.response.status_code == 429:
+        return f"{fuente} (límite diario de consultas alcanzado)"
+    if isinstance(error, requests.Timeout):
+        return f"{fuente} (no respondió a tiempo)"
+    if isinstance(error, requests.ConnectionError):
+        return f"{fuente} (sin conexión)"
+    return f"{fuente} (respuesta inesperada)"
+
+
 def buscar_libro(isbn):
-    """Consulta Open Library y, si faltan datos, Google Books. Devuelve un diccionario."""
+    """Consulta Open Library y, si faltan datos, Google Books.
+
+    Devuelve (datos, fallas): el diccionario con lo encontrado y la lista de catálogos que no
+    respondieron, para no decir "no aparece en los catálogos" cuando en realidad no se pudo consultar."""
     datos = {"isbn": isbn}
+    fallas = []
     try:
         datos.update(_open_library(isbn))
-    except requests.RequestException:
-        pass
+    except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+        fallas.append(_describir_falla("Open Library", e))
     faltan = not datos.get("titulo") or not datos.get("idioma")
     if faltan:
         try:
             for campo, valor in _google_books(isbn).items():
                 if not datos.get(campo):  # solo rellena lo que Open Library no trajo
                     datos[campo] = valor
-        except requests.RequestException:
-            pass
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            fallas.append(_describir_falla("Google Books", e))
     if not datos.get("lugar_edicion"):
         datos["lugar_edicion"] = zona_por_isbn(isbn)
-    return datos
+    return datos, fallas
+
+
+# Solo se descargan portadas de estos servidores (la URL viene de un campo del formulario)
+HOSTS_PORTADAS = {"covers.openlibrary.org", "books.google.com", "books.googleusercontent.com"}
+
+
+def descargar_portada(url, carpeta):
+    """Guarda una copia de la portada en `carpeta` (máx. 800 px). Devuelve el nombre del archivo
+    o None si no se pudo (la app sigue usando la URL externa)."""
+    partes = urlparse(url or "")
+    if partes.scheme not in ("http", "https") or partes.hostname not in HOSTS_PORTADAS:
+        return None
+    try:
+        r = requests.get(url, headers=CABECERAS, timeout=10)
+        r.raise_for_status()
+        if len(r.content) > 5 * 1024 * 1024:
+            return None
+        img = Image.open(io.BytesIO(r.content)).convert("RGB")
+        if img.width < 20 or img.height < 20:  # Open Library responde una imagen de 1x1 si no hay portada
+            return None
+        img.thumbnail((800, 800))
+        nombre = hashlib.sha1(url.encode()).hexdigest()[:16] + ".jpg"
+        carpeta.mkdir(parents=True, exist_ok=True)
+        img.save(carpeta / nombre, "JPEG", quality=85)
+        return nombre
+    except (requests.RequestException, UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
+        return None
 
 
 def _open_library(isbn):
@@ -174,7 +234,7 @@ def caption_instagram(libro):
     lineas = [f"📚 {libro['titulo']}"]
     if libro["autor"]:
         lineas.append(f"✍️ {libro['autor']}")
-    detalle = ", ".join(str(x) for x in (libro["editorial"], libro["lugar_edicion"], libro["anio"]) if x)
+    detalle = ", ".join(str(x) for x in (libro["editorial"], libro["lugar_edicion"], libro["fecha_edicion"]) if x)
     if detalle:
         lineas.append(detalle)
     if libro["edicion"]:
@@ -186,7 +246,7 @@ def caption_instagram(libro):
         lineas.append(f"Estado: {estado}")
     if libro["precio"]:
         lineas.append(f"💰 ${libro['precio']:,} CLP".replace(",", "."))
-    lineas.append("Escríbenos por DM para comprar.")
+    lineas.append("Escríbenos por DM para comprar." if (libro["stock"] or 0) > 0 else "Vendido ✔")
     etiquetas = ["#librosantiguos", "#libroslatam", "#bibliofilia", "#glossalibros"]
     for texto in (libro["genero"], libro["temas"], libro["autor"]):
         for parte in (texto or "").split(","):

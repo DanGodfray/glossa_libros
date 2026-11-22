@@ -43,6 +43,12 @@
     <a href="{{ url_for('inventario') }}" class="{{ 'activo' if request.endpoint == 'inventario' }}">Inventario</a>
     <a href="{{ url_for('ventas') }}" class="{{ 'activo' if request.endpoint == 'ventas' }}">Ventas</a>
   </nav>
-  <main>{% block contenido %}{% endblock %}</main>
+  <main>
+    {% block contenido %}{% endblock %}
+    <p class="meta" style="text-align:center;margin-top:28px">
+      <a href="{{ url_for('descargar_respaldo') }}">Descargar respaldo</a>
+      {% if session.ok %} · <a href="{{ url_for('salir') }}">Cerrar sesión</a>{% endif %}
+    </p>
+  </main>
 </body>
 </html>

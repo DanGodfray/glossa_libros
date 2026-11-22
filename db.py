@@ -1,95 +1,182 @@
-"""Base de datos SQLite: crear la tabla, guardar, buscar y listar libros."""
+"""Base de datos SQLite: esquema con migraciones, libros, ventas y consultas del inventario."""
+import datetime
+import os
+import re
 import sqlite3
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "inventario.db"
+# La ruta se puede cambiar con GLOSSA_DB (pruebas, servidores); por defecto, junto a la app
+DB_PATH = Path(os.environ.get("GLOSSA_DB") or Path(__file__).parent / "inventario.db")
 
-# Campos que vienen del formulario (todos menos id y creado)
+# Campos de la ficha que se guardan tal cual (todos menos id, creado y modificado)
 CAMPOS = [
     "isbn", "titulo", "autor", "editorial", "lugar_edicion", "procedencia",
-    "idioma", "anio", "edicion", "genero", "temas", "caracteristicas",
+    "idioma", "anio", "fecha_edicion", "edicion", "genero", "temas", "caracteristicas",
     "estado", "notas_estado", "precio", "stock", "ubicacion",
-    "portada_url", "foto", "estado_ig", "fecha_ig",
+    "portada_url", "portada_local", "foto", "estado_ig", "fecha_ig",
 ]
-NUMERICOS = {"anio", "precio", "stock"}
+DIAS_STOCK_MUERTO = 180  # desde cuántos días sin movimiento un libro cuenta como stock muerto
+AGRUPABLES = {"temas", "genero", "idioma", "ubicacion", "procedencia", "estado", "estado_ig"}
 
-ESQUEMA = """
-CREATE TABLE IF NOT EXISTS libros (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    isbn            TEXT,
-    titulo          TEXT NOT NULL,
-    autor           TEXT,
-    editorial       TEXT,
-    lugar_edicion   TEXT,
-    procedencia     TEXT,
-    idioma          TEXT,
-    anio            INTEGER,
-    edicion         TEXT,
-    genero          TEXT,
-    temas           TEXT,
-    caracteristicas TEXT,
-    estado          TEXT,
-    notas_estado    TEXT,
-    precio          INTEGER,
-    stock           INTEGER DEFAULT 1,
-    ubicacion       TEXT,
-    portada_url     TEXT,
-    foto            TEXT,
-    estado_ig       TEXT DEFAULT 'Pendiente',
-    fecha_ig        TEXT,
-    creado          TEXT DEFAULT (datetime('now', 'localtime'))
-);
-
-CREATE TABLE IF NOT EXISTS ventas (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    libro_id    INTEGER,
-    titulo      TEXT,          -- copia del título, por si después se elimina el libro
-    fecha       TEXT NOT NULL,
-    cantidad    INTEGER NOT NULL DEFAULT 1,
-    precio      INTEGER,       -- precio unitario de venta
-    comprador   TEXT,
-    notas       TEXT,
-    creado      TEXT DEFAULT (datetime('now', 'localtime'))
-);
-"""
+# Cada cambio de esquema es una migración nueva al final de la lista; nunca se edita una ya publicada.
+# PRAGMA user_version guarda cuántas se aplicaron. Una base de la v0.2 tiene versión 0.
+MIGRACIONES = [
+    # 1: esquema de la v0.2 (en una base de la v0.2 no cambia nada)
+    """
+    CREATE TABLE IF NOT EXISTS libros (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        isbn            TEXT,
+        titulo          TEXT NOT NULL,
+        autor           TEXT,
+        editorial       TEXT,
+        lugar_edicion   TEXT,
+        procedencia     TEXT,
+        idioma          TEXT,
+        anio            INTEGER,
+        edicion         TEXT,
+        genero          TEXT,
+        temas           TEXT,
+        caracteristicas TEXT,
+        estado          TEXT,
+        notas_estado    TEXT,
+        precio          INTEGER,
+        stock           INTEGER DEFAULT 1,
+        ubicacion       TEXT,
+        portada_url     TEXT,
+        foto            TEXT,
+        estado_ig       TEXT DEFAULT 'Pendiente',
+        fecha_ig        TEXT,
+        creado          TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS ventas (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        libro_id    INTEGER,
+        titulo      TEXT,
+        fecha       TEXT NOT NULL,
+        cantidad    INTEGER NOT NULL DEFAULT 1,
+        precio      INTEGER,
+        comprador   TEXT,
+        notas       TEXT,
+        creado      TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+    """,
+    # 2 (v0.3): fecha de edición como texto, portada guardada en la app, control de cambios e índices
+    """
+    ALTER TABLE libros ADD COLUMN fecha_edicion TEXT;
+    ALTER TABLE libros ADD COLUMN portada_local TEXT;
+    ALTER TABLE libros ADD COLUMN modificado TEXT;
+    UPDATE libros SET fecha_edicion = CAST(anio AS TEXT) WHERE anio IS NOT NULL;
+    UPDATE libros SET modificado = creado;
+    CREATE INDEX IF NOT EXISTS idx_libros_isbn ON libros (isbn);
+    CREATE INDEX IF NOT EXISTS idx_ventas_libro ON ventas (libro_id);
+    """,
+]
 
 
 def conectar():
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=10)
     con.row_factory = sqlite3.Row  # filas accesibles como diccionario: fila["titulo"]
     return con
 
 
 def iniciar():
-    with conectar() as con:
-        con.executescript(ESQUEMA)
+    """Crea la base si no existe y aplica las migraciones pendientes, cada una en una transacción."""
+    con = conectar()
+    try:
+        version = con.execute("PRAGMA user_version").fetchone()[0]
+        for numero in range(version + 1, len(MIGRACIONES) + 1):
+            try:
+                con.executescript(f"BEGIN;\n{MIGRACIONES[numero - 1]}\nPRAGMA user_version = {numero};\nCOMMIT;")
+            except sqlite3.Error:
+                if con.in_transaction:
+                    con.execute("ROLLBACK")
+                raise
+    finally:
+        con.close()
+
+
+def ahora():
+    """Marca de tiempo con microsegundos: sirve para detectar si una ficha cambió mientras se editaba."""
+    return datetime.datetime.now().isoformat(sep=" ", timespec="microseconds")
+
+
+# ---------- Conversión de valores ----------
+
+def entero(texto):
+    """Solo dígitos: para cantidades y stock ('3 unidades' -> 3)."""
+    digitos = "".join(c for c in str(texto or "") if c.isdigit())
+    return int(digitos) if digitos else None
+
+
+def parsear_clp(texto):
+    """Precio en pesos: '$15.000' -> 15000, '15000,50' -> 15001, '15,000' -> 15000.
+    Una coma o punto seguido de 1-2 dígitos al final se toma como decimales y se redondea."""
+    s = re.sub(r"[^\d.,]", "", str(texto or ""))
+    if not re.search(r"\d", s):
+        return None
+    m = re.fullmatch(r"(\d[\d.,]*?)[.,](\d{1,2})", s)
+    parte_entera, decimales = (m.group(1), m.group(2)) if m else (s, "")
+    valor = Decimal(re.sub(r"\D", "", parte_entera) or "0")
+    if decimales:
+        valor += Decimal(decimales) / (10 ** len(decimales))
+    return int(valor.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def anio_de(texto):
+    """Primer año de 4 dígitos de una fecha libre ('c. 1850-1860' -> 1850, '[18--]' -> None)."""
+    m = re.search(r"\d{4}", str(texto or ""))
+    return int(m.group()) if m else None
+
+
+def estado_coherente(stock, estado_ig, fecha_ig):
+    """Un libro con stock no puede quedar 'Vendido': vuelve a 'Publicado' si se posteó, si no a 'Pendiente'."""
+    if (stock or 0) > 0 and estado_ig == "Vendido":
+        return "Publicado" if fecha_ig else "Pendiente"
+    return estado_ig
 
 
 def _limpiar(datos):
-    """Deja solo los campos conocidos y convierte números."""
+    """Deja solo los campos conocidos, convierte números y deriva el año."""
     limpio = {}
     for campo in CAMPOS:
-        valor = (datos.get(campo) or "").strip()
-        if campo in NUMERICOS:
-            solo_digitos = "".join(c for c in valor if c.isdigit())
-            valor = int(solo_digitos) if solo_digitos else None
+        valor = str(datos.get(campo) if datos.get(campo) is not None else "").strip()
+        if campo == "precio":
+            valor = parsear_clp(valor)
+        elif campo == "stock":
+            valor = entero(valor)
         limpio[campo] = valor if valor != "" else None
+    # La fecha de edición se guarda tal como se escribe; el año (para ordenar) sale de ella
+    if not limpio["fecha_edicion"] and limpio["anio"]:
+        limpio["fecha_edicion"] = limpio["anio"]
+    limpio["anio"] = anio_de(limpio["fecha_edicion"])
+    limpio["estado_ig"] = estado_coherente(limpio["stock"], limpio["estado_ig"], limpio["fecha_ig"])
     return limpio
 
 
-def guardar(datos, libro_id=None):
-    """Crea un libro nuevo o actualiza uno existente. Devuelve el id."""
+# ---------- Libros ----------
+
+def guardar(datos, libro_id=None, stock_original=None):
+    """Crea un libro o actualiza uno existente. Devuelve el id.
+
+    Al editar, si se pasa stock_original (el stock que mostraba el formulario), el stock se aplica
+    como diferencia sobre el valor actual: así una venta hecha en otro teléfono no se pisa."""
     d = _limpiar(datos)
     with conectar() as con:
         if libro_id:
+            if stock_original is not None:
+                fila = con.execute("SELECT stock FROM libros WHERE id = ?", (libro_id,)).fetchone()
+                if fila:
+                    d["stock"] = max(0, (fila["stock"] or 0) + (d["stock"] or 0) - stock_original)
+                    d["estado_ig"] = estado_coherente(d["stock"], d["estado_ig"], d["fecha_ig"])
             asignaciones = ", ".join(f"{c} = ?" for c in CAMPOS)
-            con.execute(f"UPDATE libros SET {asignaciones} WHERE id = ?",
-                        [d[c] for c in CAMPOS] + [libro_id])
+            con.execute(f"UPDATE libros SET {asignaciones}, modificado = ? WHERE id = ?",
+                        [d[c] for c in CAMPOS] + [ahora(), libro_id])
             return libro_id
         columnas = ", ".join(CAMPOS)
         marcas = ", ".join("?" for _ in CAMPOS)
-        cur = con.execute(f"INSERT INTO libros ({columnas}) VALUES ({marcas})",
-                          [d[c] for c in CAMPOS])
+        cur = con.execute(f"INSERT INTO libros ({columnas}, modificado) VALUES ({marcas}, ?)",
+                          [d[c] for c in CAMPOS] + [ahora()])
         return cur.lastrowid
 
 
@@ -108,16 +195,23 @@ def eliminar(libro_id):
         con.execute("DELETE FROM libros WHERE id = ?", (libro_id,))
 
 
+def portada_en_uso(nombre):
+    """True si algún libro usa esa portada descargada (varios libros pueden compartirla)."""
+    with conectar() as con:
+        return con.execute("SELECT 1 FROM libros WHERE portada_local = ? LIMIT 1", (nombre,)).fetchone() is not None
+
+
 def cambiar_estado_ig(libro_id, estado_ig, fecha_ig=None):
     with conectar() as con:
-        con.execute("UPDATE libros SET estado_ig = ?, fecha_ig = COALESCE(?, fecha_ig) WHERE id = ?",
-                    (estado_ig, fecha_ig, libro_id))
+        libro = con.execute("SELECT stock, fecha_ig FROM libros WHERE id = ?", (libro_id,)).fetchone()
+        if not libro:
+            return
+        estado = estado_coherente(libro["stock"], estado_ig, fecha_ig or libro["fecha_ig"])
+        con.execute("UPDATE libros SET estado_ig = ?, fecha_ig = COALESCE(?, fecha_ig), modificado = ? "
+                    "WHERE id = ?", (estado, fecha_ig, ahora(), libro_id))
 
 
-def entero(texto):
-    digitos = "".join(c for c in str(texto or "") if c.isdigit())
-    return int(digitos) if digitos else None
-
+# ---------- Inventario: filtros, páginas y resumen ----------
 
 # Cada libro con la fecha de su último movimiento (última venta o, si nunca se vendió, su ingreso)
 # y los días que lleva sin moverse: sirve para detectar el stock muerto.
@@ -131,9 +225,9 @@ FROM (
 """
 
 
-def listar(f):
-    """Lista libros aplicando filtros. f es un diccionario (los parámetros de la URL)."""
-    sql = f"SELECT * FROM ({LIBROS_CON_MOVIMIENTO}) WHERE 1 = 1"
+def _filtros_sql(f):
+    """Arma el WHERE del inventario a partir de los filtros (parámetros de la URL)."""
+    sql = " WHERE 1 = 1"
     params = []
     meses = entero(f.get("sin_mov"))
     if meses:  # stock muerto: con stock y sin ventas ni ingreso en los últimos N meses
@@ -147,7 +241,7 @@ def listar(f):
             sql += f" AND {campo} = ?"
             params.append(f[campo])
     for clave, operador in (("precio_min", ">="), ("precio_max", "<=")):
-        valor = entero(f.get(clave))
+        valor = parsear_clp(f.get(clave))
         if valor is not None:
             sql += f" AND precio {operador} ?"
             params.append(valor)
@@ -158,12 +252,39 @@ def listar(f):
     if f.get("tema"):
         sql += " AND (',' || REPLACE(temas, ', ', ',') || ',') LIKE ?"
         params.append(f"%,{f['tema']},%")
+    return sql, params
+
+
+def listar(f, limite=None, desde=0):
+    """Lista libros con filtros. Con `limite`, devuelve solo una página.
+    Si se agrupa, se ordena primero por ese campo para que cada grupo quede junto entre páginas."""
+    where, params = _filtros_sql(f)
     orden = {"titulo": "titulo", "autor": "autor", "anio": "anio",
              "precio": "precio DESC", "reciente": "id DESC",
              "sin_mov": "ultimo_mov ASC, id ASC"}.get(f.get("orden"), "id DESC")
-    sql += f" ORDER BY {orden}"
+    if f.get("agrupar") in AGRUPABLES:
+        orden = f"COALESCE({f['agrupar']}, '') COLLATE NOCASE, {orden}"
+    sql = f"SELECT * FROM ({LIBROS_CON_MOVIMIENTO}){where} ORDER BY {orden}"
+    if limite:
+        sql += " LIMIT ? OFFSET ?"
+        params = params + [limite, desde]
     with conectar() as con:
         return con.execute(sql, params).fetchall()
+
+
+def resumen(f):
+    """Totales de todos los libros filtrados (no solo de la página que se ve)."""
+    where, params = _filtros_sql(f)
+    muerto = f"COALESCE(stock, 0) > 0 AND dias_sin_mov >= {int(DIAS_STOCK_MUERTO)}"
+    sql = f"""
+        SELECT COUNT(*) AS titulos,
+               COALESCE(SUM(COALESCE(stock, 0)), 0) AS ejemplares,
+               COALESCE(SUM(COALESCE(precio, 0) * COALESCE(stock, 0)), 0) AS valor,
+               COALESCE(SUM(CASE WHEN {muerto} THEN 1 ELSE 0 END), 0) AS muertos,
+               COALESCE(SUM(CASE WHEN {muerto} THEN COALESCE(precio, 0) * stock ELSE 0 END), 0) AS valor_muerto
+        FROM ({LIBROS_CON_MOVIMIENTO}){where}"""
+    with conectar() as con:
+        return dict(con.execute(sql, params).fetchone())
 
 
 # ---------- Ventas ----------
@@ -180,8 +301,9 @@ def registrar_venta(libro_id, cantidad, precio, fecha, comprador="", notas=""):
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (libro_id, libro["titulo"], fecha, cantidad, precio, comprador or None, notas or None))
         nuevo_stock = stock - cantidad
-        con.execute("UPDATE libros SET stock = ?, estado_ig = CASE WHEN ? = 0 THEN 'Vendido' ELSE estado_ig END "
-                    "WHERE id = ?", (nuevo_stock, nuevo_stock, libro_id))
+        con.execute("UPDATE libros SET stock = ?, modificado = ?, "
+                    "estado_ig = CASE WHEN ? = 0 THEN 'Vendido' ELSE estado_ig END WHERE id = ?",
+                    (nuevo_stock, ahora(), nuevo_stock, libro_id))
 
 
 def anular_venta(venta_id):
@@ -192,10 +314,10 @@ def anular_venta(venta_id):
             return None
         con.execute("DELETE FROM ventas WHERE id = ?", (venta_id,))
         # Si estaba 'Vendido', vuelve a 'Publicado' si alguna vez se posteó, si no a 'Pendiente'
-        con.execute("UPDATE libros SET stock = COALESCE(stock, 0) + ?, estado_ig = CASE "
+        con.execute("UPDATE libros SET stock = COALESCE(stock, 0) + ?, modificado = ?, estado_ig = CASE "
                     "WHEN estado_ig = 'Vendido' THEN CASE WHEN fecha_ig IS NOT NULL THEN 'Publicado' "
                     "ELSE 'Pendiente' END ELSE estado_ig END WHERE id = ?",
-                    (venta["cantidad"], venta["libro_id"]))
+                    (venta["cantidad"], ahora(), venta["libro_id"]))
         return venta["libro_id"]
 
 

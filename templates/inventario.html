@@ -60,7 +60,8 @@
 
 <p class="meta">{{ resumen.titulos }} títulos · {{ resumen.ejemplares }} ejemplares ·
   valor {{ resumen.valor | clp }} CLP ·
-  <a href="{{ url_for('exportar', **filtros) }}">Exportar CSV</a></p>
+  <a href="{{ url_for('exportar', **filtros) }}">Exportar CSV</a>
+  {% if filtros %} · <a href="{{ url_for('inventario', limpiar=1) }}">Limpiar filtros</a>{% endif %}</p>
 {% if resumen.muertos and not filtros.sin_mov %}
 <div class="aviso">
   {{ resumen.muertos }} {{ "título lleva" if resumen.muertos == 1 else "títulos llevan" }} más de 6 meses sin venderse
@@ -70,12 +71,10 @@
 {% endif %}
 
 {% for grupo, libros in grupos.items() %}
-  {% if grupos|length > 1 or grupo != "Todos" %}<h2>{{ grupo }} ({{ libros|length }})</h2>{% endif %}
+  {% if grupos|length > 1 or grupo != "Todos" %}<h2>{{ grupo }}{% if paginas == 1 %} ({{ libros|length }}){% endif %}</h2>{% endif %}
   {% for l in libros %}
   <div class="tarjeta">
-    {% if l.foto %}<img src="{{ url_for('static', filename='fotos/' ~ l.foto) }}" alt="">
-    {% elif l.portada_url %}<img src="{{ l.portada_url }}" alt="">
-    {% else %}<img alt="">{% endif %}
+    {% if imagen_libro(l) %}<img src="{{ imagen_libro(l) }}" alt="" loading="lazy">{% else %}<img alt="">{% endif %}
     <a href="{{ url_for('ver_libro', libro_id=l.id) }}">
       <strong>{{ l.titulo }}</strong><br>
       <span class="meta">{{ l.autor or "Autor desconocido" }}{{ " · " ~ l.anio if l.anio }}{{ " · " ~ l.idioma if l.idioma }}</span><br>
@@ -94,4 +93,12 @@
 {% else %}
   <p>No hay libros{{ " con estos filtros" if filtros }}. Toca <strong>+ Libro</strong> para agregar uno.</p>
 {% endfor %}
+
+{% if paginas > 1 %}
+<div class="fila" style="align-items:center;margin-top:8px">
+  {% if pagina > 1 %}<a class="btn sec" style="margin:0" href="{{ url_for('inventario', pagina=pagina - 1, **filtros) }}">← Anterior</a>{% else %}<span></span>{% endif %}
+  {% if pagina < paginas %}<a class="btn sec" style="margin:0" href="{{ url_for('inventario', pagina=pagina + 1, **filtros) }}">Siguiente →</a>{% endif %}
+</div>
+<p class="meta" style="text-align:center">Página {{ pagina }} de {{ paginas }}</p>
+{% endif %}
 {% endblock %}
