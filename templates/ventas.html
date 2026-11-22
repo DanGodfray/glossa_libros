@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block contenido %}
+<h1>Ventas</h1>
+
+<p class="meta">{{ resumen.ventas }} ventas · {{ resumen.ejemplares }} ejemplares ·
+  total {{ resumen.total | clp }} CLP ·
+  <a href="{{ url_for('exportar_ventas') }}">Exportar CSV</a></p>
+
+{% for mes, grupo in meses.items() %}
+  <h2>{{ mes }} · {{ grupo.total | clp }}</h2>
+  {% for v in grupo.ventas %}
+  <div class="tarjeta">
+    {% if v.existe %}<a href="{{ url_for('ver_libro', libro_id=v.libro_id, _anchor='venta') }}">{% else %}<div style="flex:1">{% endif %}
+      <strong>{{ v.titulo }}</strong>{% if not v.existe %} <span class="meta">(eliminado del inventario)</span>{% endif %}<br>
+      <span class="meta">{{ v.fecha }} · {{ v.cantidad }} × {{ v.precio | clp }}{{ " · " ~ v.comprador if v.comprador }}</span>
+      {% if v.notas %}<br><span class="meta">{{ v.notas }}</span>{% endif %}
+    {% if v.existe %}</a>{% else %}</div>{% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <p>Aún no hay ventas. Se registran desde la ficha de cada libro, en la sección <strong>Ventas</strong>.</p>
+{% endfor %}
+{% endblock %}

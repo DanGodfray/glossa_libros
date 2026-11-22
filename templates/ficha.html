@@ -7,6 +7,13 @@
 
 <h1>{{ "Editar libro" if libro.id else "Nuevo libro" }}</h1>
 {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+{% if duplicado %}
+<div class="aviso">
+  Ya existe <a href="{{ url_for('ver_libro', libro_id=duplicado.id) }}">«{{ duplicado.titulo }}»</a>
+  con este ISBN (stock {{ duplicado.stock or 0 }}). Abre esa ficha para sumar stock, o toca
+  <strong>Guardar</strong> de nuevo para crearla como ficha aparte (útil si este ejemplar tiene otro estado o precio).
+</div>
+{% endif %}
 
 {% if not libro.id %}
 <!-- 1) Escanear: Safari abre la cámara trasera y envía la foto al servidor -->
@@ -36,6 +43,7 @@
   {% endif %}
   <input type="hidden" name="portada_url" value="{{ libro.portada_url or '' }}">
   <input type="hidden" name="foto" value="{{ libro.foto or '' }}">
+  {% if duplicado %}<input type="hidden" name="confirmar_duplicado" value="1">{% endif %}
 
   <label>Título *</label>
   <input name="titulo" required value="{{ libro.titulo or '' }}">
@@ -98,11 +106,48 @@
 </form>
 
 {% if libro.id %}
-<div class="caja">
+<div class="caja" id="instagram">
   <label>Texto para Instagram (edítalo y cópialo)</label>
   <textarea id="caption" rows="10">{{ caption }}</textarea>
   <button class="btn sec" type="button" onclick="copiar()">Copiar texto</button>
   {% if libro.foto %}<p class="meta">Para subir la foto: mantén presionada la imagen de arriba y elige "Guardar en Fotos".</p>{% endif %}
+</div>
+
+<div class="caja" id="venta">
+  <h2 style="margin-top:0">Ventas</h2>
+  {% if aviso_venta %}<div class="aviso">{{ aviso_venta }}</div>{% endif %}
+  {% if (libro.stock or 0) > 0 %}
+  <form method="post" action="{{ url_for('vender', libro_id=libro.id) }}">
+    <div class="fila">
+      <div><label>Cantidad (stock {{ libro.stock }})</label>
+        <input name="cantidad" type="number" min="1" max="{{ libro.stock }}" value="1" inputmode="numeric" required></div>
+      <div><label>Precio unitario (CLP)</label>
+        <input name="precio" inputmode="numeric" value="{{ libro.precio or '' }}"></div>
+    </div>
+    <div class="fila">
+      <div><label>Fecha</label><input name="fecha" type="date" value="{{ hoy }}" required></div>
+      <div><label>Comprador (opcional)</label><input name="comprador" placeholder="@usuario o nombre"></div>
+    </div>
+    <label>Notas (opcional)</label>
+    <input name="notas" placeholder="Instagram, feria, envío por Starken…">
+    <button class="btn">Registrar venta</button>
+  </form>
+  {% else %}
+  <p class="meta">Sin stock disponible. Para volver a venderlo, súmale stock en la ficha.</p>
+  {% endif %}
+
+  {% for v in ventas %}
+  <div class="tarjeta" style="align-items:center{{ ';margin-top:14px' if loop.first }}">
+    <div style="flex:1">
+      <strong>{{ v.cantidad }} × {{ v.precio | clp }}</strong> · {{ v.fecha }}<br>
+      <span class="meta">{{ v.comprador or "Sin comprador" }}{{ " · " ~ v.notas if v.notas }}</span>
+    </div>
+    <form method="post" action="{{ url_for('anular_venta', venta_id=v.id) }}"
+          onsubmit="return confirm('¿Anular esta venta? Los ejemplares vuelven al stock.')">
+      <button class="btn peligro" style="margin:0;padding:8px 12px;font-size:14px;width:auto">Anular</button>
+    </form>
+  </div>
+  {% endfor %}
 </div>
 <form action="{{ url_for('eliminar', libro_id=libro.id) }}" method="post"
       onsubmit="return confirm('¿Eliminar este libro del inventario?')">

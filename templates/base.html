@@ -10,6 +10,7 @@
   <style>
     :root { --tinta:#1d1b18; --suave:#6b645b; --linea:#ddd6cc; --fondo:#faf7f2; --acento:#7a3e2b; }
     * { box-sizing: border-box; }
+    html { scroll-padding-top: 80px; } /* que la barra fija no tape la sección al saltar a #venta */
     body { margin:0; font:16px/1.4 -apple-system, system-ui, sans-serif; color:var(--tinta); background:var(--fondo); }
     nav { position:sticky; top:0; display:flex; gap:8px; padding:10px 12px; background:var(--tinta); }
     nav a { flex:1; text-align:center; padding:10px; border-radius:10px; color:#fff; text-decoration:none; font-weight:600; }
@@ -40,6 +41,7 @@
   <nav>
     <a href="{{ url_for('nuevo') }}" class="{{ 'activo' if request.endpoint in ('nuevo','escanear','ver_libro') }}">+ Libro</a>
     <a href="{{ url_for('inventario') }}" class="{{ 'activo' if request.endpoint == 'inventario' }}">Inventario</a>
+    <a href="{{ url_for('ventas') }}" class="{{ 'activo' if request.endpoint == 'ventas' }}">Ventas</a>
   </nav>
   <main>{% block contenido %}{% endblock %}</main>
 </body>

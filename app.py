@@ -74,13 +74,48 @@ def opciones():
     }
 
 
+MENSAJES = {
+    "guardado": "Guardado.",
+    "venta": "Venta registrada. Se descontó del stock.",
+    "anulada": "Venta anulada. Los ejemplares volvieron al stock.",
+    "vender": "Para marcarlo como vendido, registra la venta más abajo: así se descuenta el stock.",
+    "error_venta": "No se pudo registrar: la cantidad debe ser entre 1 y el stock disponible.",
+}
+DIAS_STOCK_MUERTO = 180  # desde cuántos días sin ventas un libro cuenta como stock muerto en el resumen
+AGRUPABLES = {"temas", "genero", "idioma", "ubicacion", "procedencia", "estado", "estado_ig"}
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+         "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+@app.template_filter("clp")
+def formato_clp(valor):
+    """85000 -> $85.000"""
+    return "$" + f"{int(valor or 0):,}".replace(",", ".")
+
+
 def guardar_foto(archivo, nombre_base):
     """Guarda la foto del libro reducida a 1600 px (suficiente para Instagram)."""
     img = ImageOps.exif_transpose(Image.open(archivo)).convert("RGB")
     img.thumbnail((1600, 1600))
-    nombre = f"{nombre_base}_{int(time.time())}.jpg"
+    base = "".join(c for c in nombre_base if c.isalnum())[:20] or "libro"  # nada de rutas como ../
+    nombre = f"{base}_{int(time.time())}_{secrets.token_hex(3)}.jpg"
     img.save(CARPETA_FOTOS / nombre, "JPEG", quality=88)
     return nombre
+
+
+def foto_valida(nombre):
+    """Devuelve el nombre solo si es un archivo que existe dentro de static/fotos.
+    El formulario manda el nombre en un campo oculto, así que no se confía en él."""
+    nombre = Path(nombre or "").name
+    if not nombre or nombre.startswith("."):
+        return None
+    return nombre if (CARPETA_FOTOS / nombre).is_file() else None
+
+
+def borrar_foto(nombre):
+    nombre = foto_valida(nombre)
+    if nombre:
+        (CARPETA_FOTOS / nombre).unlink(missing_ok=True)
 
 
 @app.route("/")
@@ -135,14 +170,28 @@ def guardar(libro_id=None):
     datos["temas"] = ", ".join(t.strip() for t in datos.get("temas", "").split(",") if t.strip())
     datos["caracteristicas"] = ", ".join(request.form.getlist("caracteristicas") +
                                          [c.strip() for c in datos.get("otras_caract", "").split(",") if c.strip()])
+    datos["isbn"] = servicios.normalizar_isbn(datos.get("isbn")) or datos.get("isbn", "").strip()
+
+    # La foto actual sale de la base de datos al editar; en un libro nuevo, del campo oculto (validado)
+    anterior = db.obtener(libro_id) if libro_id else None
+    datos["foto"] = anterior["foto"] if anterior else foto_valida(datos.get("foto"))
     foto = request.files.get("foto")
     if foto and foto.filename:
         datos["foto"] = guardar_foto(foto.stream, datos.get("isbn") or "libro")
+
+    # Libro nuevo con un ISBN que ya existe: avisar antes de crear un duplicado
+    if not libro_id and datos["isbn"] and not datos.get("confirmar_duplicado"):
+        existente = db.buscar_por_isbn(datos["isbn"])
+        if existente:
+            return render_template("ficha.html", libro=datos, duplicado=existente, **opciones())
+
     nuevo_id = db.guardar(datos, libro_id)
+    if anterior and anterior["foto"] and anterior["foto"] != datos["foto"]:
+        borrar_foto(anterior["foto"])  # se reemplazó la foto: borrar la antigua
     if request.form.get("accion") == "otro":
         return redirect(url_for("nuevo", ubicacion=datos.get("ubicacion", ""),
                                 procedencia=datos.get("procedencia", "")))
-    return redirect(url_for("ver_libro", libro_id=nuevo_id, ok=1))
+    return redirect(url_for("ver_libro", libro_id=nuevo_id, msg="guardado"))
 
 
 @app.route("/libro/<int:libro_id>")
@@ -150,30 +199,91 @@ def ver_libro(libro_id):
     libro = db.obtener(libro_id)
     if not libro:
         return redirect(url_for("inventario"))
-    aviso = "Guardado." if request.args.get("ok") else ""
-    return render_template("ficha.html", libro=libro, aviso=aviso,
-                           caption=servicios.caption_instagram(libro), **opciones())
+    msg = request.args.get("msg", "")
+    # Los mensajes de ventas se muestran dentro de la sección Ventas, que es donde queda la pantalla
+    de_venta = msg in ("venta", "anulada", "vender", "error_venta")
+    return render_template("ficha.html", libro=libro,
+                           aviso="" if de_venta else MENSAJES.get(msg, ""),
+                           aviso_venta=MENSAJES.get(msg, "") if de_venta else "",
+                           caption=servicios.caption_instagram(libro), ventas=db.ventas_de(libro_id),
+                           hoy=time.strftime("%Y-%m-%d"), **opciones())
 
 
 @app.route("/libro/<int:libro_id>/eliminar", methods=["POST"])
 def eliminar(libro_id):
+    libro = db.obtener(libro_id)
     db.eliminar(libro_id)
+    if libro:
+        borrar_foto(libro["foto"])
     return redirect(url_for("inventario"))
 
 
 @app.route("/libro/<int:libro_id>/ig", methods=["POST"])
 def cambiar_ig(libro_id):
     estado = request.form.get("estado_ig")
-    fecha = time.strftime("%Y-%m-%d") if estado == "Publicado" else None
-    db.cambiar_estado_ig(libro_id, estado, fecha)
+    libro = db.obtener(libro_id)
+    if estado == "Vendido" and libro and (libro["stock"] or 0) > 0:
+        # Quedan ejemplares: en vez de solo cambiar la etiqueta, llevar a registrar la venta
+        return redirect(url_for("ver_libro", libro_id=libro_id, msg="vender", _anchor="venta"))
+    if estado in ESTADOS_IG:
+        fecha = time.strftime("%Y-%m-%d") if estado == "Publicado" else None
+        db.cambiar_estado_ig(libro_id, estado, fecha)
     return redirect(request.referrer or url_for("inventario"))
+
+
+@app.route("/libro/<int:libro_id>/vender", methods=["POST"])
+def vender(libro_id):
+    f = request.form
+    try:
+        db.registrar_venta(libro_id, db.entero(f.get("cantidad")) or 0, db.entero(f.get("precio")),
+                           f.get("fecha") or time.strftime("%Y-%m-%d"),
+                           f.get("comprador", "").strip(), f.get("notas", "").strip())
+        msg = "venta"
+    except ValueError:
+        msg = "error_venta"
+    return redirect(url_for("ver_libro", libro_id=libro_id, msg=msg, _anchor="venta"))
+
+
+@app.route("/venta/<int:venta_id>/anular", methods=["POST"])
+def anular_venta(venta_id):
+    libro_id = db.anular_venta(venta_id)
+    if libro_id and db.obtener(libro_id):
+        return redirect(url_for("ver_libro", libro_id=libro_id, msg="anulada", _anchor="venta"))
+    return redirect(url_for("ventas"))
+
+
+@app.route("/ventas")
+def ventas():
+    filas = db.listar_ventas()
+    meses = {}
+    for v in filas:
+        anio, mes = v["fecha"][:4], v["fecha"][5:7]
+        clave = f"{MESES[int(mes) - 1].capitalize()} {anio}" if mes.isdigit() and 1 <= int(mes) <= 12 else v["fecha"]
+        grupo = meses.setdefault(clave, {"ventas": [], "total": 0})
+        grupo["ventas"].append(v)
+        grupo["total"] += (v["precio"] or 0) * v["cantidad"]
+    resumen = {"ventas": len(filas), "ejemplares": sum(v["cantidad"] for v in filas),
+               "total": sum((v["precio"] or 0) * v["cantidad"] for v in filas)}
+    return render_template("ventas.html", meses=meses, resumen=resumen)
+
+
+@app.route("/ventas.csv")
+def exportar_ventas():
+    salida = io.StringIO()
+    escritor = csv.writer(salida, delimiter=";")
+    columnas = ["id", "libro_id", "titulo", "fecha", "cantidad", "precio", "comprador", "notas"]
+    escritor.writerow(columnas + ["total"])
+    for v in db.listar_ventas():
+        escritor.writerow([v[c] for c in columnas] + [(v["precio"] or 0) * v["cantidad"]])
+    return Response("﻿" + salida.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=ventas_glossalibros.csv"})
 
 
 @app.route("/inventario")
 def inventario():
     filtros = request.args.to_dict()
     libros = db.listar(filtros)
-    agrupar = filtros.get("agrupar", "")
+    agrupar = filtros.get("agrupar", "") if filtros.get("agrupar") in AGRUPABLES else ""
     grupos = {}
     for libro in libros:
         if agrupar == "temas":
@@ -189,6 +299,9 @@ def inventario():
         "ejemplares": sum(l["stock"] or 0 for l in libros),
         "valor": sum((l["precio"] or 0) * (l["stock"] or 0) for l in libros),
     }
+    muertos = [l for l in libros if (l["stock"] or 0) > 0 and (l["dias_sin_mov"] or 0) >= DIAS_STOCK_MUERTO]
+    resumen["muertos"] = len(muertos)
+    resumen["valor_muerto"] = sum((l["precio"] or 0) * l["stock"] for l in muertos)
     return render_template("inventario.html", grupos=dict(sorted(grupos.items())),
                            filtros=filtros, resumen=resumen, **opciones())
 
@@ -198,9 +311,9 @@ def exportar():
     libros = db.listar(request.args.to_dict())
     salida = io.StringIO()
     escritor = csv.writer(salida, delimiter=";")  # ";" para que Excel en español lo abra bien
-    escritor.writerow(["id"] + db.CAMPOS + ["creado"])
+    escritor.writerow(["id"] + db.CAMPOS + ["creado", "ultimo_movimiento", "dias_sin_movimiento"])
     for l in libros:
-        escritor.writerow([l["id"]] + [l[c] for c in db.CAMPOS] + [l["creado"]])
+        escritor.writerow([l["id"]] + [l[c] for c in db.CAMPOS] + [l["creado"], l["ultimo_mov"], l["dias_sin_mov"]])
     return Response("﻿" + salida.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=inventario_glossalibros.csv"})
 

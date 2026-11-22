@@ -2,7 +2,7 @@
 
 App web en Flask para inventariar libros usados y antiguos desde el teléfono: se escanea el ISBN con la cámara, los datos se completan desde Open Library y Google Books, y se genera el texto para publicar el libro en Instagram.
 
-**Versión actual: 0.1**, la primera versión funcional, pensada para uso personal en la red de la casa.
+**Versión actual: 0.2**, pensada para uso personal en la red de la casa. Ver [cambios por versión](#cambios-por-versión).
 
 ## Recorrido por la app
 
@@ -20,7 +20,7 @@ App web en Flask para inventariar libros usados y antiguos desde el teléfono: s
 - **O escribir el ISBN:** acepta ISBN-10 e ISBN-13, con o sin guiones, y revisa el dígito verificador. Los ISBN-10 se convierten a ISBN-13.
 - **Datos automáticos:** busca en Open Library y completa lo que falte con Google Books (título, autor, editorial, lugar, año, idioma, género, temas y portada). Si no encuentra el lugar de edición, lo deduce del prefijo del ISBN (Chile, España, México…).
 - **Códigos antiguos:** si el código de barras no es un ISBN, como en algunos libros antiguos, la app muestra el número leído y pide escribir el ISBN impreso.
-- **Duplicados:** si el ISBN escaneado ya está en el inventario, abre esa ficha para sumar stock.
+- **Duplicados:** si el ISBN escaneado ya está en el inventario, abre esa ficha para sumar stock. Si el ISBN se escribe directo en la ficha, avisa antes de guardar y permite crear una ficha aparte (útil si el ejemplar tiene otro estado o precio).
 - **"Guardar y agregar otro":** abre una ficha nueva con la ubicación y la procedencia ya llenas, para ingresar varios libros seguidos.
 
 ### 2. Ficha del ejemplar y texto para Instagram
@@ -35,7 +35,7 @@ App web en Flask para inventariar libros usados y antiguos desde el teléfono: s
 - **Datos del ejemplar:** estado (de "Como nuevo" a "Deteriorado") con notas, precio en CLP, stock, ubicación física y procedencia.
 - **Características:** casillas para primera edición, firmado o dedicado, tapa dura, ex libris, intonso, etc., más un campo libre.
 - **Autocompletado:** los campos sugieren los valores ya usados, para escribirlos siempre igual.
-- **Foto propia:** se reduce a 1600 px y acepta el formato HEIC del iPhone. Si no hay foto, se usa la portada del catálogo.
+- **Foto propia:** se reduce a 1600 px y acepta el formato HEIC del iPhone. Si no hay foto, se usa la portada del catálogo. Al cambiar la foto o eliminar el libro, el archivo anterior se borra.
 - **Texto para Instagram:** se genera con título, autor, datos de edición, características, estado, precio, llamado a comprar por DM y hashtags. Se puede editar y copiar con un botón.
 
 ### 3. Inventario
@@ -47,29 +47,60 @@ App web en Flask para inventariar libros usados y antiguos desde el teléfono: s
 </p>
 
 - **Búsqueda** por título, autor, ISBN o editorial.
-- **Filtros** por género, tema, idioma y estado de Instagram.
-- **Agrupar** por tema, género, idioma, ubicación o estado de Instagram.
-- **Ordenar** por más recientes, título, autor, año o precio.
+- **Filtros** por género, tema, idioma y estado de Instagram. En "Más filtros": ubicación, procedencia, estado del libro, disponibilidad (con stock o agotados), tiempo sin venderse y rango de precio.
+- **Agrupar** por tema, género, idioma, ubicación, procedencia, estado del libro o estado de Instagram.
+- **Ordenar** por más recientes, título, autor, año, precio o más estancados.
 - **Resumen:** títulos, ejemplares y valor total del stock en CLP.
-- **Estado de Instagram** (Pendiente, Listo, Publicado, Vendido) cambiable desde la lista. Al marcar "Publicado" se guarda la fecha.
-- **Exportar a CSV** con los filtros activos. Se abre bien en Excel en español.
+- **Estado de Instagram** (Pendiente, Listo, Publicado, Vendido) cambiable desde la lista. Al marcar "Publicado" se guarda la fecha. Al marcar "Vendido" un libro que aún tiene stock, la app lleva a registrar la venta.
+- **Exportar a CSV** con los filtros activos, incluidos los días sin movimiento. Se abre bien en Excel en español.
 
-### 4. Acceso con contraseña
+### 4. Ventas
 
-<img src="docs/capturas/07_contrasena.png" width="260" alt="Pantalla para entrar con contraseña">
+<p>
+  <img src="docs/capturas/07_registrar_venta.png" width="260" alt="Sección Ventas de la ficha con el formulario y una venta registrada">
+  &nbsp;
+  <img src="docs/capturas/08_ventas.png" width="260" alt="Página de ventas agrupadas por mes con totales">
+</p>
+
+- **Registrar una venta** desde la ficha: cantidad, precio unitario, fecha, comprador y notas. El stock se descuenta y, si se agota, el libro pasa a "Vendido".
+- **Anular una venta:** los ejemplares vuelven al stock.
+- **Página de ventas:** todas las ventas agrupadas por mes, con el total de cada mes y el total general. Se pueden exportar a CSV.
+- **El historial se conserva** aunque después se elimine el libro del inventario.
+
+### 5. Stock muerto
+
+<img src="docs/capturas/09_stock_muerto.png" width="260" alt="Inventario filtrado por libros con más de 6 meses sin venderse">
+
+- **Tiempo sin movimiento:** se cuenta desde la última venta del libro o, si nunca se vendió, desde que se ingresó.
+- **Aviso en el inventario:** cuántos títulos llevan más de 6 meses sin venderse y cuánto dinero representan, con un enlace para verlos.
+- **En cada tarjeta:** los libros con stock que llevan 3 meses o más sin venderse muestran "Sin moverse hace N meses".
+- **Filtro** por más de 3, 6 o 12 meses sin venderse, y **orden** "Más estancados". Sirve para decidir qué rebajar, volver a publicar o llevar a una feria.
+
+### 6. Acceso con contraseña
+
+<img src="docs/capturas/10_contrasena.png" width="260" alt="Pantalla para entrar con contraseña">
 
 Opcional en la red de la casa y obligatoria si la app se publica en internet (ver [Configuración](#configuración)). El teléfono recuerda el acceso por 90 días.
 
-## Limitaciones conocidas de la versión 0.1
+## Limitaciones conocidas
 
-- Marcar un libro como "Vendido" no descuenta stock ni registra la venta (fecha, precio, comprador).
-- El aviso de duplicados solo funciona al escanear o buscar un ISBN, no al escribirlo directo en la ficha.
-- Al cambiar la foto de un libro o eliminarlo, el archivo de la foto anterior no se borra.
 - Solo una foto por libro (Instagram suele usar carruseles).
 - El escaneo es por foto, no con video en vivo.
 - Una sola contraseña compartida, sin usuarios ni historial de cambios.
 - Se puede exportar a CSV, pero no importar.
-- No hay filtros por ubicación, procedencia, estado del libro ni rango de precio.
+
+## Cambios por versión
+
+### 0.2
+- **Ventas:** se registran con cantidad, precio, fecha, comprador y notas; descuentan stock y se pueden anular. Nueva página de ventas por mes, con exportación a CSV.
+- **Stock muerto:** tiempo sin venderse de cada libro, aviso en el inventario, filtro y orden "Más estancados".
+- **Más filtros:** ubicación, procedencia, estado del libro, disponibilidad y rango de precio.
+- **Duplicados:** aviso también al escribir el ISBN directo en la ficha. Los ISBN se guardan normalizados.
+- **Fotos:** al cambiar la foto o eliminar un libro se borra el archivo anterior.
+- **Seguridad:** los nombres de archivo de las fotos ya no dependen de lo que se escriba en la ficha, y la app no borra archivos fuera de la carpeta de fotos.
+
+### 0.1
+- Primera versión funcional: ingreso por escaneo o ISBN, datos automáticos, ficha del ejemplar, texto para Instagram, inventario con filtros y CSV, contraseña opcional.
 
 ## Instalación en Windows
 

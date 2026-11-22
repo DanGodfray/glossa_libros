@@ -2,6 +2,8 @@
 {% block contenido %}
 <h1>Inventario</h1>
 
+{% set extra_activos = filtros.ubicacion or filtros.procedencia or filtros.estado or filtros.disponibilidad
+                       or filtros.sin_mov or filtros.precio_min or filtros.precio_max %}
 <!-- Filtros: cada cambio recarga la lista -->
 <form class="caja" method="get" onchange="this.submit()">
   <input name="q" placeholder="Buscar título, autor, ISBN…" value="{{ filtros.q or '' }}">
@@ -20,18 +22,52 @@
   <div class="fila">
     <div><label>Agrupar por</label><select name="agrupar">
       {% for valor, texto in [("", "Sin agrupar"), ("temas", "Tema"), ("genero", "Género"),
-                              ("idioma", "Idioma"), ("ubicacion", "Ubicación"), ("estado_ig", "Instagram")] %}
+                              ("idioma", "Idioma"), ("ubicacion", "Ubicación"), ("procedencia", "Procedencia"),
+                              ("estado", "Estado del libro"), ("estado_ig", "Instagram")] %}
         <option value="{{ valor }}" {{ "selected" if filtros.agrupar == valor }}>{{ texto }}</option>{% endfor %}</select></div>
     <div><label>Ordenar</label><select name="orden">
       {% for valor, texto in [("reciente", "Más recientes"), ("titulo", "Título"), ("autor", "Autor"),
-                              ("anio", "Año"), ("precio", "Precio")] %}
+                              ("anio", "Año"), ("precio", "Precio"), ("sin_mov", "Más estancados")] %}
         <option value="{{ valor }}" {{ "selected" if filtros.orden == valor }}>{{ texto }}</option>{% endfor %}</select></div>
   </div>
+
+  <details {{ "open" if extra_activos }} style="margin-top:12px">
+    <summary class="meta">Más filtros</summary>
+    <div class="fila">
+      <div><label>Ubicación</label><select name="ubicacion"><option value="">Todas</option>
+        {% for v in ubicaciones %}<option {{ "selected" if filtros.ubicacion == v }}>{{ v }}</option>{% endfor %}</select></div>
+      <div><label>Procedencia</label><select name="procedencia"><option value="">Todas</option>
+        {% for v in procedencias %}<option {{ "selected" if filtros.procedencia == v }}>{{ v }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="fila">
+      <div><label>Estado del libro</label><select name="estado"><option value="">Todos</option>
+        {% for v in estados %}<option {{ "selected" if filtros.estado == v }}>{{ v }}</option>{% endfor %}</select></div>
+      <div><label>Disponibilidad</label><select name="disponibilidad">
+        {% for valor, texto in [("", "Todos"), ("stock", "Con stock"), ("agotados", "Agotados")] %}
+          <option value="{{ valor }}" {{ "selected" if filtros.disponibilidad == valor }}>{{ texto }}</option>{% endfor %}</select></div>
+    </div>
+    <label>Sin movimiento (stock muerto)</label>
+    <select name="sin_mov">
+      {% for valor, texto in [("", "Todos"), ("3", "Más de 3 meses sin venderse"),
+                              ("6", "Más de 6 meses sin venderse"), ("12", "Más de 1 año sin venderse")] %}
+        <option value="{{ valor }}" {{ "selected" if filtros.sin_mov == valor }}>{{ texto }}</option>{% endfor %}</select>
+    <div class="fila">
+      <div><label>Precio desde</label><input name="precio_min" inputmode="numeric" value="{{ filtros.precio_min or '' }}"></div>
+      <div><label>Precio hasta</label><input name="precio_max" inputmode="numeric" value="{{ filtros.precio_max or '' }}"></div>
+    </div>
+  </details>
 </form>
 
 <p class="meta">{{ resumen.titulos }} títulos · {{ resumen.ejemplares }} ejemplares ·
-  valor ${{ "{:,}".format(resumen.valor).replace(",", ".") }} CLP ·
+  valor {{ resumen.valor | clp }} CLP ·
   <a href="{{ url_for('exportar', **filtros) }}">Exportar CSV</a></p>
+{% if resumen.muertos and not filtros.sin_mov %}
+<div class="aviso">
+  {{ resumen.muertos }} {{ "título lleva" if resumen.muertos == 1 else "títulos llevan" }} más de 6 meses sin venderse
+  ({{ resumen.valor_muerto | clp }} detenidos).
+  <a href="{{ url_for('inventario', sin_mov=6, orden='sin_mov') }}">Ver cuáles</a>
+</div>
+{% endif %}
 
 {% for grupo, libros in grupos.items() %}
   {% if grupos|length > 1 or grupo != "Todos" %}<h2>{{ grupo }} ({{ libros|length }})</h2>{% endif %}
@@ -43,7 +79,10 @@
     <a href="{{ url_for('ver_libro', libro_id=l.id) }}">
       <strong>{{ l.titulo }}</strong><br>
       <span class="meta">{{ l.autor or "Autor desconocido" }}{{ " · " ~ l.anio if l.anio }}{{ " · " ~ l.idioma if l.idioma }}</span><br>
-      <span class="meta">stock {{ l.stock or 0 }}{{ " · $" ~ "{:,}".format(l.precio).replace(",", ".") if l.precio }}{{ " · " ~ l.ubicacion if l.ubicacion }}</span>
+      <span class="meta">{% if (l.stock or 0) > 0 %}stock {{ l.stock }}{% else %}<strong>agotado</strong>{% endif %}{{ " · " ~ (l.precio | clp) if l.precio }}{{ " · " ~ l.ubicacion if l.ubicacion }}</span>
+      {% if (l.stock or 0) > 0 and (l.dias_sin_mov or 0) >= 90 %}
+        <br><span class="meta" style="color:#a12">Sin moverse hace {{ (l.dias_sin_mov / 30) | int }} meses</span>
+      {% endif %}
     </a>
     <form action="{{ url_for('cambiar_ig', libro_id=l.id) }}" method="post">
       <select name="estado_ig" onchange="this.form.submit()">
@@ -53,6 +92,6 @@
   </div>
   {% endfor %}
 {% else %}
-  <p>Aún no hay libros. Toca <strong>+ Libro</strong> para empezar.</p>
+  <p>No hay libros{{ " con estos filtros" if filtros }}. Toca <strong>+ Libro</strong> para agregar uno.</p>
 {% endfor %}
 {% endblock %}
