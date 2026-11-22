@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block contenido %}
+<h1>Inventario</h1>
+
+<!-- Filtros: cada cambio recarga la lista -->
+<form class="caja" method="get" onchange="this.submit()">
+  <input name="q" placeholder="Buscar título, autor, ISBN…" value="{{ filtros.q or '' }}">
+  <div class="fila">
+    <div><label>Género</label><select name="genero"><option value="">Todos</option>
+      {% for v in generos %}<option {{ "selected" if filtros.genero == v }}>{{ v }}</option>{% endfor %}</select></div>
+    <div><label>Tema</label><select name="tema"><option value="">Todos</option>
+      {% for v in temas %}<option {{ "selected" if filtros.tema == v }}>{{ v }}</option>{% endfor %}</select></div>
+  </div>
+  <div class="fila">
+    <div><label>Idioma</label><select name="idioma"><option value="">Todos</option>
+      {% for v in idiomas %}<option {{ "selected" if filtros.idioma == v }}>{{ v }}</option>{% endfor %}</select></div>
+    <div><label>Instagram</label><select name="estado_ig"><option value="">Todos</option>
+      {% for v in estados_ig %}<option {{ "selected" if filtros.estado_ig == v }}>{{ v }}</option>{% endfor %}</select></div>
+  </div>
+  <div class="fila">
+    <div><label>Agrupar por</label><select name="agrupar">
+      {% for valor, texto in [("", "Sin agrupar"), ("temas", "Tema"), ("genero", "Género"),
+                              ("idioma", "Idioma"), ("ubicacion", "Ubicación"), ("estado_ig", "Instagram")] %}
+        <option value="{{ valor }}" {{ "selected" if filtros.agrupar == valor }}>{{ texto }}</option>{% endfor %}</select></div>
+    <div><label>Ordenar</label><select name="orden">
+      {% for valor, texto in [("reciente", "Más recientes"), ("titulo", "Título"), ("autor", "Autor"),
+                              ("anio", "Año"), ("precio", "Precio")] %}
+        <option value="{{ valor }}" {{ "selected" if filtros.orden == valor }}>{{ texto }}</option>{% endfor %}</select></div>
+  </div>
+</form>
+
+<p class="meta">{{ resumen.titulos }} títulos · {{ resumen.ejemplares }} ejemplares ·
+  valor ${{ "{:,}".format(resumen.valor).replace(",", ".") }} CLP ·
+  <a href="{{ url_for('exportar', **filtros) }}">Exportar CSV</a></p>
+
+{% for grupo, libros in grupos.items() %}
+  {% if grupos|length > 1 or grupo != "Todos" %}<h2>{{ grupo }} ({{ libros|length }})</h2>{% endif %}
+  {% for l in libros %}
+  <div class="tarjeta">
+    {% if l.foto %}<img src="{{ url_for('static', filename='fotos/' ~ l.foto) }}" alt="">
+    {% elif l.portada_url %}<img src="{{ l.portada_url }}" alt="">
+    {% else %}<img alt="">{% endif %}
+    <a href="{{ url_for('ver_libro', libro_id=l.id) }}">
+      <strong>{{ l.titulo }}</strong><br>
+      <span class="meta">{{ l.autor or "Autor desconocido" }}{{ " · " ~ l.anio if l.anio }}{{ " · " ~ l.idioma if l.idioma }}</span><br>
+      <span class="meta">stock {{ l.stock or 0 }}{{ " · $" ~ "{:,}".format(l.precio).replace(",", ".") if l.precio }}{{ " · " ~ l.ubicacion if l.ubicacion }}</span>
+    </a>
+    <form action="{{ url_for('cambiar_ig', libro_id=l.id) }}" method="post">
+      <select name="estado_ig" onchange="this.form.submit()">
+        {% for e in estados_ig %}<option {{ "selected" if l.estado_ig == e }}>{{ e }}</option>{% endfor %}
+      </select>
+    </form>
+  </div>
+  {% endfor %}
+{% else %}
+  <p>Aún no hay libros. Toca <strong>+ Libro</strong> para empezar.</p>
+{% endfor %}
+{% endblock %}

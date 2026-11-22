@@ -1,0 +1,23 @@
+# Entorno virtual y archivos generados por Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Datos del inventario: viven en cada instalación, no en el repositorio
+inventario.db
+*.db-journal
+static/fotos/*
+!static/fotos/.gitkeep
+respaldos/
+
+# Secretos y configuración local
+.env
+google_books_key.txt
+
+# Paquetes generados y archivos del sistema o del editor
+*.zip
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

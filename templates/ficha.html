@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block contenido %}
+{% set caracts_base = ["Primera edición", "Firmado o dedicado", "Tapa dura", "Rústica",
+   "Encuadernación en piel", "Sobrecubierta", "Ilustrado", "Láminas o mapas", "Ex libris",
+   "Tirada limitada", "Cantos dorados", "Intonso"] %}
+{% set actuales = (libro.caracteristicas or "").split(", ") %}
+
+<h1>{{ "Editar libro" if libro.id else "Nuevo libro" }}</h1>
+{% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+
+{% if not libro.id %}
+<!-- 1) Escanear: Safari abre la cámara trasera y envía la foto al servidor -->
+<form class="caja" action="{{ url_for('escanear') }}" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="ubicacion" value="{{ libro.ubicacion or '' }}">
+  <input type="hidden" name="procedencia" value="{{ libro.procedencia or '' }}">
+  <label class="btn" style="color:#fff;font-size:17px">
+    📷 Escanear código de barras
+    <input type="file" name="foto_codigo" accept="image/*" capture="environment"
+           onchange="this.form.submit()" hidden>
+  </label>
+  <label for="isbn_manual">…o escribe el ISBN</label>
+  <div class="fila">
+    <input id="isbn_manual" name="isbn" inputmode="numeric" placeholder="978…">
+    <button class="btn sec" style="margin:0">Buscar</button>
+  </div>
+</form>
+{% endif %}
+
+<!-- 2) Ficha del libro -->
+<form class="caja" method="post" enctype="multipart/form-data"
+      action="{{ url_for('guardar', libro_id=libro.id) if libro.id else url_for('guardar') }}">
+  {% if libro.foto %}
+    <img class="portada" src="{{ url_for('static', filename='fotos/' ~ libro.foto) }}" alt="">
+  {% elif libro.portada_url %}
+    <img class="portada" src="{{ libro.portada_url }}" alt="">
+  {% endif %}
+  <input type="hidden" name="portada_url" value="{{ libro.portada_url or '' }}">
+  <input type="hidden" name="foto" value="{{ libro.foto or '' }}">
+
+  <label>Título *</label>
+  <input name="titulo" required value="{{ libro.titulo or '' }}">
+  <label>Autor</label>
+  <input name="autor" value="{{ libro.autor or '' }}">
+  <div class="fila">
+    <div><label>Editorial</label><input name="editorial" value="{{ libro.editorial or '' }}"></div>
+    <div><label>Lugar de edición</label><input name="lugar_edicion" value="{{ libro.lugar_edicion or '' }}"></div>
+  </div>
+  <div class="fila">
+    <div><label>Año</label><input name="anio" inputmode="numeric" value="{{ libro.anio or '' }}"></div>
+    <div><label>Idioma</label><input name="idioma" list="l_idiomas" value="{{ libro.idioma or '' }}"></div>
+  </div>
+  <div class="fila">
+    <div><label>Edición</label><input name="edicion" placeholder="Primera, 2.ª…" value="{{ libro.edicion or '' }}"></div>
+    <div><label>ISBN</label><input name="isbn" inputmode="numeric" value="{{ libro.isbn or '' }}"></div>
+  </div>
+  <label>Género</label>
+  <input name="genero" list="l_generos" value="{{ libro.genero or '' }}">
+  <label>Temas / ideas (separados por coma)</label>
+  <input name="temas" list="l_temas" value="{{ libro.temas or '' }}" placeholder="Chile siglo XIX, viajeros">
+  <label>Procedencia del ejemplar</label>
+  <input name="procedencia" list="l_procedencias" value="{{ libro.procedencia or '' }}">
+
+  <label>Características</label>
+  <div class="chips">
+    {% for c in caracts_base %}
+      <label><input type="checkbox" name="caracteristicas" value="{{ c }}" {{ "checked" if c in actuales }}> {{ c }}</label>
+    {% endfor %}
+  </div>
+  <input name="otras_caract" style="margin-top:8px" placeholder="Otras, separadas por coma"
+         value="{{ actuales | reject('in', caracts_base) | reject('equalto', '') | join(', ') }}">
+
+  <div class="fila">
+    <div><label>Estado</label>
+      <select name="estado"><option value=""></option>
+        {% for e in estados %}<option {{ "selected" if libro.estado == e }}>{{ e }}</option>{% endfor %}
+      </select></div>
+    <div><label>Notas del estado</label><input name="notas_estado" value="{{ libro.notas_estado or '' }}"></div>
+  </div>
+  <div class="fila">
+    <div><label>Precio (CLP)</label><input name="precio" inputmode="numeric" value="{{ libro.precio or '' }}"></div>
+    <div><label>Stock</label><input name="stock" inputmode="numeric" value="{{ libro.stock or 1 }}"></div>
+  </div>
+  <label>Ubicación</label>
+  <input name="ubicacion" list="l_ubicaciones" value="{{ libro.ubicacion or '' }}" placeholder="Estante A, fila 3">
+
+  <div class="fila">
+    <div><label>Instagram</label>
+      <select name="estado_ig">
+        {% for e in estados_ig %}<option {{ "selected" if libro.estado_ig == e }}>{{ e }}</option>{% endfor %}
+      </select></div>
+    <div><label>Fecha de posteo</label><input type="date" name="fecha_ig" value="{{ libro.fecha_ig or '' }}"></div>
+  </div>
+  <label>Foto del libro para Instagram</label>
+  <input type="file" name="foto" accept="image/*">
+
+  <button class="btn" name="accion" value="guardar">Guardar</button>
+  {% if not libro.id %}<button class="btn sec" name="accion" value="otro">Guardar y agregar otro</button>{% endif %}
+</form>
+
+{% if libro.id %}
+<div class="caja">
+  <label>Texto para Instagram (edítalo y cópialo)</label>
+  <textarea id="caption" rows="10">{{ caption }}</textarea>
+  <button class="btn sec" type="button" onclick="copiar()">Copiar texto</button>
+  {% if libro.foto %}<p class="meta">Para subir la foto: mantén presionada la imagen de arriba y elige "Guardar en Fotos".</p>{% endif %}
+</div>
+<form action="{{ url_for('eliminar', libro_id=libro.id) }}" method="post"
+      onsubmit="return confirm('¿Eliminar este libro del inventario?')">
+  <button class="btn peligro">Eliminar libro</button>
+</form>
+{% endif %}
+
+<datalist id="l_idiomas">{% for v in idiomas %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="l_generos">{% for v in generos %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="l_temas">{% for v in temas %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="l_ubicaciones">{% for v in ubicaciones %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="l_procedencias">{% for v in procedencias %}<option value="{{ v }}">{% endfor %}</datalist>
+
+<script>
+  // Por HTTP el iPhone no permite navigator.clipboard, así que usamos el método clásico
+  function copiar() {
+    const t = document.getElementById("caption");
+    t.select(); t.setSelectionRange(0, 99999);
+    document.execCommand("copy");
+    alert("Texto copiado");
+  }
+</script>
+{% endblock %}

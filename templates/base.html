@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Permite "Agregar a pantalla de inicio" en el iPhone y abrir sin barra de Safari -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="GlossaLibros">
+  <title>GlossaLibros</title>
+  <style>
+    :root { --tinta:#1d1b18; --suave:#6b645b; --linea:#ddd6cc; --fondo:#faf7f2; --acento:#7a3e2b; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:16px/1.4 -apple-system, system-ui, sans-serif; color:var(--tinta); background:var(--fondo); }
+    nav { position:sticky; top:0; display:flex; gap:8px; padding:10px 12px; background:var(--tinta); }
+    nav a { flex:1; text-align:center; padding:10px; border-radius:10px; color:#fff; text-decoration:none; font-weight:600; }
+    nav a.activo { background:var(--acento); }
+    main { padding:14px; max-width:720px; margin:auto; }
+    h1 { font-size:22px; margin:6px 0 14px; }
+    label { display:block; font-size:13px; color:var(--suave); margin:12px 0 4px; }
+    input, select, textarea { width:100%; padding:12px; font-size:16px; border:1px solid var(--linea); border-radius:10px; background:#fff; }
+    .fila { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .btn { display:block; width:100%; padding:14px; margin-top:12px; border:0; border-radius:12px; font-size:17px; font-weight:600; background:var(--acento); color:#fff; text-align:center; text-decoration:none; }
+    .btn.sec { background:#fff; color:var(--acento); border:1px solid var(--acento); }
+    .btn.peligro { background:#fff; color:#a12; border:1px solid #a12; }
+    .caja { background:#fff; border:1px solid var(--linea); border-radius:14px; padding:14px; margin-bottom:14px; }
+    .aviso { background:#fff4d6; border:1px solid #e8c770; border-radius:10px; padding:10px 12px; margin-bottom:12px; }
+    .chips { display:flex; flex-wrap:wrap; gap:8px; }
+    .chips label { display:flex; align-items:center; gap:6px; margin:0; padding:8px 10px; border:1px solid var(--linea); border-radius:20px; background:#fff; color:var(--tinta); font-size:14px; }
+    .chips input { width:auto; }
+    .portada { max-height:220px; border-radius:8px; display:block; margin:0 auto 10px; }
+    .tarjeta { display:flex; gap:12px; padding:10px; background:#fff; border:1px solid var(--linea); border-radius:12px; margin-bottom:8px; }
+    .tarjeta img { width:56px; height:80px; object-fit:cover; border-radius:4px; background:var(--linea); }
+    .tarjeta a { color:inherit; text-decoration:none; flex:1; }
+    .meta { font-size:13px; color:var(--suave); }
+    .tarjeta select { width:auto; padding:6px; font-size:13px; }
+    h2 { font-size:17px; margin:18px 0 8px; color:var(--acento); }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="{{ url_for('nuevo') }}" class="{{ 'activo' if request.endpoint in ('nuevo','escanear','ver_libro') }}">+ Libro</a>
+    <a href="{{ url_for('inventario') }}" class="{{ 'activo' if request.endpoint == 'inventario' }}">Inventario</a>
+  </nav>
+  <main>{% block contenido %}{% endblock %}</main>
+</body>
+</html>

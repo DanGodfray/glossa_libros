@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block contenido %}
+<h1>Entrar</h1>
+{% if error %}<div class="aviso">{{ error }}</div>{% endif %}
+<form class="caja" method="post">
+  <label for="clave">Contraseña</label>
+  <input id="clave" name="clave" type="password" autocomplete="current-password" required autofocus>
+  <button class="btn">Entrar</button>
+</form>
+{% endblock %}
